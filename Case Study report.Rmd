@@ -1,0 +1,367 @@
+---
+title: "STAC51 Case Study Report"
+output: pdf_document
+author: Artem Petrishchev, Daniel Ekoko, Niranj Sasikumar, Ting Lei
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+library(pROC)
+library(ResourceSelection)
+library(jtools)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+```
+
+\begin{center}
+\section*{Building a Model to Predict the Status of Credit}
+
+\bigskip
+
+\textbf{Group 30}
+
+\bigskip
+
+Artem Petrishchev, 1002575260: Background and Significance, Exploratory Data Analysis
+
+Ting Lei, 1005813425: Background and Significance, Exploratory Data Analysis
+
+Daniel Ekoko, 1003551177: Model Selection, Model Validation/Diagnostics
+
+Niranj Sasikumar, 1005070539: Model Selection, Model Validation/Diagnostics
+
+\bigskip
+
+\textbf{Word Count: 1797}
+\end{center}
+\newpage
+
+# Background and Significance
+
+## Abstract
+
+Credit risk refers to the risk of default on a loan or other credit extended to an individual or entity. It is a measure of the likelihood that a borrower will not be able to repay their debts as agreed. Credit risk is a significant concern for lenders, who must manage this risk in order to ensure that they are able to recover the funds they have loaned out. The background of credit risk associated with individuals dates back to the early days of lending. As people began to borrow money for various purposes, lenders realized that they needed to assess the credit-worthiness of borrowers in order to minimize the risk of default. Over time, this led to the development of credit scoring systems, which use various factors to assess the likelihood that a borrower will repay their debts.
+
+The significance of credit risk associated with individuals is that it can have significant financial implications for both the borrower and the lender. For the borrower, a poor credit score or history of default can make it more difficult to obtain credit in the future, and may result in higher interest rates and fees. For the lender, credit risk can lead to losses if borrowers default on their loans, which can have a ripple effect on the lender's ability to continue lending.
+
+This case study aims to to analyze the factors contributing to credit risk associated with individual borrowers, and to understand the relationship between certain personal and financial factors in determining credit risk.
+
+Research Question: Can we predict credit risk for individuals using personal information and financial history?
+
+## Variable Description
+
+- Status - Status of debtor's checking account (no checking account, <0 DM, 0<=...<200 DM, >=200 DM)
+
+- Duration - Credit duration in months
+
+- Credit History - History of compliance (delay in paying off in the past, critical account, no credits taken, existing credits paid back duly till now, all credits at this bank paid back duly)
+
+- Purpose - Purpose for which the credit is for (others, car (new), car(used), furniture, radio/television, domestic appliances, repairs, education, vacation, retraining, business)
+
+- Amount - Credit amount in DM (German currency)
+
+- Savings - Debtors savings (no savings account, < 100 DM, 100 <= ... < 500 DM, 500 <= ... < 1000 DM, ... >= 1000 DM)
+
+- Employment Duration - Duration of debtor's employment with current employer (unemployed, < 1yr, 1 <= ... < 4 yr, 4 <= ... < 7 yr, >= 7yr)
+
+- Installment Rate - Credit installments as a percentage of debtor's disposable incomes (>= 35, 25 <= ... < 35, 20 <= ... < 25, < 20)
+
+- Personal Status Sex - Sex and marital status (male: divorced/separated, female: non-single or male:single, male: married/widowed, female: single) 
+
+- Other Debtors - Another debtor (none, co-applicant, guarantor)
+
+- Present Residence - Length of time in years that the debtor has lived in their present residence (< 1yr, 1 <= ... < 4 yr, 4 <= ... < 7 yr, >= 7 yr)
+
+- Property - Debtors most valued property (unknown/no property, car or other, building soc. savings agr./life insurance, real estate )
+
+- Age - Age in years
+
+- Other Installment Plans - Installment plans from providers (bank, stores, none) 
+
+- Housing - Type of housing the debtor lives in (for free, rent, own)
+
+- Job - Quality of debtor's job (unemployed/unskilled - non-resident, unskilled - resident, skilled employee/official, manager/self-empl./highly qualif. employee)
+
+- People Liable - Number of persons who are financially dependent on the debtor (3 or more, 0 to 2)
+
+- Telephone - Telephone land-line registered on the debtors name (no, yes (under customer name))
+
+- Foreign Worker Status - Is debtor a foreign worker (no, yes)
+
+- Credit Risk - Has the credit contract been complied with (good, bad)
+
+# Exploratory Data Analysis
+
+## Loading the Data
+
+```{r load}
+data <- read.csv("data.updated.csv")
+data <- data %>% mutate_if(is.character, as.factor)
+```
+
+We loaded the data and factored all qualitative variables in the data. The data set contains 1000 observations. Depending on the information we obtain from the data set, there are 20 predictors we consider that may have an effect on the status of credit.
+
+## Analysis of Quantitative Variables
+
+```{r, fig.height = 3, fig.width = 5}
+quantitative <- c("age", "amount", "duration")
+df <- data[, quantitative]
+corrplot(cor(df), method = "square")
+```
+
+First, a quantitative variable analysis was performed. We examined the correlation between the quantitative variables. We can see that there is a moderate correlation between duration and amount. However, there are no strongly correlated predictor variables.
+
+## Analysis of Qualitative Variables
+
+```{r, fig.height = 3, warning=FALSE}
+# Group by age ranges
+data <- data %>% mutate(age.update = case_when(age <= 25 ~ "19 - 25",
+                                               age <= 40 ~ "25 - 40",
+                                               age > 40 ~ "41 & Older"))
+denoms <- c(190, 190, 538, 538, 272, 272)
+
+ggplot(data = data, aes(x = factor(age.update), fill = factor(credit_risk))) + 
+  geom_bar(position = "dodge", aes(y = (..count..)/denoms)) + labs(fill = "Credit Risk") + 
+  ggtitle("Bar Plots of Age Groups and Credit Risk") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Age Group") + 
+  ylab("Conditional Proportion") + scale_fill_manual(values = c("darksalmon", "cornsilk4"))
+```
+
+The plot suggests that there is a negative association between age and having "bad" credit risk. That is as age increases, credit risk decreases. The age group of 19 - 25 have the highest credit risk.
+
+```{r, fig.height = 3, warning=FALSE}
+# We are dividing all counts by the total group count to get a proportionate plot view
+denoms <- c(963, 963, 37, 37)
+
+ggplot(data = data, aes(x = factor(foreign_worker), fill = factor(credit_risk))) + 
+  geom_bar(position = "dodge", aes(y = (..count..)/denoms)) + labs(fill = "Credit Risk") + 
+  ggtitle("Bar Plots of Worker Status and Credit Risk") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Foreign Worker") + 
+  ylab("Conditional Proportion") + scale_fill_manual(values = c("darksalmon", "cornsilk4"))
+```
+
+The plot suggests that local workers have relatively higher credit risk than foreign workers, and this suggests that there is an association between worker status and credit risk. Another point worth mentioning is that we had considerably more local workers than foreign workers in the data.
+
+```{r, include=FALSE}
+# Bar plot for purpose
+d_purpose <- c(12, 12, 103, 103, 181, 181, 22,  22, 280, 280, 234, 234,  12,  12,  50,  50,  97,  97,   9,   9)
+
+purpose_plot <- ggplot(data = data, aes(x = factor(purpose), fill = factor(credit_risk))) + 
+  geom_bar(position = "dodge", aes(y = (..count..)/d_purpose)) + labs(fill = "Credit Risk") + 
+  ggtitle("Purpose vs Credit Risk") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Purpose") + 
+  ylab("Conditional Proportion") + scale_fill_manual(values = c("darksalmon", "cornsilk4"))
+
+# Bar plot for savings
+data <- data %>% 
+  mutate(savings_update = case_when(
+    savings == "unknown/no savings account"~ "Unknown/None",
+    savings == "... <  100 DM"~ "Less than 100 DM",
+    savings == "100 <= ... <  500 DM"~ "Between 100 and 500 DM",
+    savings == "500 <= ... < 1000 DM"~ "Between 500 and 1000 DM",
+    savings == "... >= 1000 DM"~ "More than 1000 DM"
+  ))
+
+savings_update.Levels <- c("Unknown/None", "Less than 100 DM", "Between 100 and 500 DM",
+                           "Between 500 and 1000 DM", "More than 1000 DM")
+
+data <- data %>%
+  mutate(savings_update = factor(savings_update, levels = savings_update.Levels))
+
+d_savings <- rep((data %>% count(savings_update))$n, each = 2)
+
+savings_plot <- ggplot(data = data, aes(x = factor(savings_update), fill = factor(credit_risk))) + 
+  geom_bar(position = "dodge", aes(y = (..count..)/d_savings)) + labs(fill = "Credit Risk") + 
+  ggtitle("Savings vs Credit Risk") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("Savings") + 
+  ylab("Conditional Proportion") + scale_fill_manual(values = c("darksalmon", "cornsilk4"))
+
+# Bar plot for status
+data <- data %>%
+  mutate(status_update = case_when(
+    status == "no checking account"~ "No Account",
+    status == "... < 0 DM"~ "Less than 0 DM",
+    status == "0<= ... < 200 DM"~ "Between 0 and 200DM",
+    status == "... >= 200 DM / salary for at least 1 year"~ "More than 200DM"
+  ))
+
+status_update.Levels <- c("No Account", "Less than 0 DM", "Between 0 and 200DM",
+                          "More than 200DM")
+
+data <- data %>%
+  mutate(status_update = factor(status_update, levels = status_update.Levels))
+
+denoms <- rep((data %>% count(status_update))$n, each = 2)
+
+status_plot <- ggplot(data = data, aes(x = factor(status_update), fill = factor(credit_risk))) + 
+  geom_bar(position = "dodge", aes(y = (..count..)/denoms)) + labs(fill = "Credit Risk") + 
+  ggtitle("Status vs Credit Risk") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("Chequing Account Status") + ylab("Conditional Proportion") +
+  scale_fill_manual(values = c("darksalmon", "cornsilk4"))
+```
+
+```{r, fig.height=4, fig.width=10, warning=FALSE}
+grid.arrange(purpose_plot, savings_plot, status_plot, ncol = 3)
+```
+
+## Analysis Summary
+
+Based on the correlation matrix, no strongly correlated predictor variables were observed so multi-collinearity is not an issue and none of the variables need to be dropped. Secondly, we observed a negative association between age and credit risk. As age increases, credit risk decreases. Another relationship that we considered was that between foreign worker status and credit risk. Although our plot suggests that local workers have higher credit risk than foreign workers, we must note that there are considerably more local workers than foreign workers in our data.
+
+# Model Selection
+
+## Splitting the Data
+
+```{r split}
+set.seed(123)
+train_index <- createDataPartition(data$credit_risk, p = 0.8, list = FALSE)
+train_data <- data[train_index,]
+test_data <- data[-train_index,]
+```
+
+We split the data into training data and testing data.
+
+## Automatic Model Selection
+
+```{r automatic-1}
+full_model <- glm((credit_risk == "bad") ~ ., data = train_data, family = "binomial")
+```
+
+We chose a logistic model since credit_risk is a binary variable. We started by fitting a main effect model with all predictors. We started with a model that had no interaction terms since there would be too many terms even if we only considered two-way interactions.
+
+```{r automatic-2}
+model_both <- step(full_model, direction = "both", trace = 0)
+model_backward <- step(full_model, direction = "backward", trace = 0)
+model_forward <- step(glm(credit_risk ~ 1, data = train_data, family = "binomial"),
+                      direction = "forward", scope = formula(full_model), trace = 0)
+```
+
+We used the step() function to automatically select the model. We experimented with different directions.
+
+```{r automatic-3}
+formula(model_backward)
+```
+
+All directions selected the same predictors with the same AIC and the same residual deviance.
+
+We considered the two-way interactions between all the potential predictors in our data and found that this provided no additional value to the performance of our model based on the fact that adding any possible combination of two-way interactions resulted in higher AIC’s for our model.
+
+## Manual Model Selection
+
+```{r manual}
+manual_model = glm((credit_risk == "bad") ~ status + duration + credit_history +
+                     purpose + amount + savings + installment_rate + personal_status_sex +
+                     other_debtors + age + foreign_worker, family = "binomial",
+                   data = train_data)
+```
+
+We used the drop1() function to try and further simplify the automatically-selected model by dropping the least significant variables using a significance level of 0.05. The variables that we dropped using this method were present_residence, property, other_installment_plans, and housing.
+
+## Comparing the Automatically-Selected and Manually-Selected Models
+
+```{r comparison-1, include=FALSE}
+automatic_model <- model_backward
+
+AIC_a <- AIC(automatic_model)
+AIC_m <- AIC(manual_model)
+
+y_pred_prob_a <- predict(automatic_model, test_data, type = "response")
+y_pred_a <- as.factor(ifelse(y_pred_prob_a > 0.321, "bad", "good"))
+confusion_matrix_a <- confusionMatrix(y_pred_a, test_data$credit_risk)
+accuracy_a <- confusion_matrix_a$overall["Accuracy"]
+precision_a <- confusion_matrix_a$byClass["Pos Pred Value"]
+f1_score_a <- confusion_matrix_a$byClass["F1"]
+
+y_pred_prob_m <- predict(manual_model, test_data, type = "response")
+y_pred_m <- as.factor(ifelse(y_pred_prob_m > 0.383, "bad", "good"))
+confusion_matrix_m <- confusionMatrix(y_pred_m, test_data$credit_risk)
+accuracy_m <- confusion_matrix_m$overall["Accuracy"]
+precision_m <- confusion_matrix_m$byClass["Pos Pred Value"]
+f1_score_m <- confusion_matrix_m$byClass["F1"]
+
+roc_a <- roc(train_data$credit_risk, fitted(automatic_model))
+auc_a <- as.numeric(auc(roc_a))
+
+roc_m <- roc(train_data$credit_risk, fitted(manual_model))
+auc_m <- as.numeric(auc(roc_m))
+```
+
+```{r comparison-2, echo=FALSE}
+results <- data.frame(am = c(AIC_a, accuracy_a, precision_a, f1_score_a, auc_a),
+                      mm = c(AIC_m, accuracy_m, precision_m, f1_score_m, auc_m))
+
+colnames(results) <- c("Automatic Model", "Manual Model")
+rownames(results) <- c("AIC", "Accuracy", "Precision", "F-Score", "ROC AUC")
+
+results
+```
+
+Although the manually-selected model was simpler in terms of having less variables, the AIC of the model increased and the area under the ROC curve decreased. Although, both ROC AUC's suggest that both models are excellent fits. The accuracy and precision of the manually-selected model on the testing dataset increased, but the F-score decreased. So although the manually-selected model is worse in terms of AIC, ROC, and F-score, it has better accuracy and precision on the testing data.
+
+```{r comparison-3}
+anova(manual_model, automatic_model, test = "LRT")$"Pr(>Chi)"[2]
+```
+
+The likelihood ratio test (LRT) is an appropriate goodness-of-fit test for our analysis because it is designed to compare nested models, which is the case for our two candidate models, as one is a reduced version of the other. Our LRT findings revealed a significant difference between the two models, with a p-value of 0.01022, which is less than the common significance level of 0.05. This result indicates that the more complex model, the automatically-selected model, provides a significantly better fit to the data compared to the simpler manually-selected model. Therefore, we will use the automatically-selected model for further analysis.
+
+# Model Validation/Diagnostics
+
+```{r validation-1}
+hoslem.test(automatic_model$y, fitted(automatic_model), g = 17)
+```
+
+By running the Hosmer-Lemeshow test on the model, we get a p-value of 0.3628. This p-value is greater than our significance level of $\alpha = 0.05$, which means that our model fits the data well.
+
+```{r validation-2, fig.height=2.5}
+plot1 <- effect_plot(automatic_model, pred = duration, interval = TRUE, data = train_data,
+                     y.label = "Predicted Probability")
+plot2 <- effect_plot(automatic_model, pred = amount, interval = TRUE, data = train_data,
+                     y.label = "Predicted Probability")
+plot3 <- effect_plot(automatic_model, pred = age, interval = TRUE, data = train_data,
+                     y.label = "Predicted Probability")
+grid.arrange(plot1, plot2, plot3, ncol = 3)
+```
+
+From the predicted probability curves, we can see that the predicted probability of having bad credit status increases with credit duration and credit amount and decreases with age.
+
+```{r validation-3, fig.height=3.5, fig.width=7, message=FALSE}
+par(mfrow = c(1, 2))
+roc <- roc(train_data$credit_risk ~ fitted(automatic_model), plot = TRUE,
+           print.auc = TRUE, print.thres = "best")
+residuals <- rstandard(automatic_model)
+fitted <- fitted(automatic_model)
+plot(fitted, residuals, xlab = "Fitted Values", ylab = "Residuals", abline(h = 0))
+```
+
+The area under the ROC curve is 0.844 which suggests that our model is a great fit. The best threshold or cutoff value for our predicted probabilities is 0.321. From the residual plot, we can conclude that there are no obvious outliers.
+
+```{r validation-4}
+pred_prob <- predict(automatic_model, test_data, type = "response")
+predicted <- as.factor(ifelse(pred_prob > 0.321, "bad", "good"))
+
+confusion_matrix <- confusionMatrix(predicted, test_data$credit_risk)
+confusion_matrix$table
+confusion_matrix$byClass
+```
+
+The sensitivity, specificity, and recall of our model on the testing data is fairly good. The precision is somewhat low compared to the other metrics, however, it is not an issue in our case since it is more important for a bank to correctly predict if the credit status will be "bad" rather than predicting if it will be "good".
+
+# Discussion/Conclusion
+
+The goal of this report was to identify the factors that are likely to influence credit risk in individuals and build a model to predict whether the status of credit will be good or bad. From our analysis, we identified that the variables status, duration, credit_history, purpose, amount, savings, installment_rate, personal_status_sex, other_debtors, present_residence, property, age, other_installment_plans, housing, and foreign_worker are the best variables to have in our model to predict what credit_risk will be.
+
+Analyzing factors that affect credit risk in individuals allows for significant research in this field and can advance the financial industry in various ways, such as improving credit assessment and underwriting processes.
+
+Some of the limitations of our analysis would be the dataset being relatively small for such a task since it only contains 1000 observations and there were a lot of categorical variables which are more difficult to work with and interpret, this was in addition to many ordinal variables with more than two levels making it even more challenging to apply regression techniques effectively. Additionally, the dataset may contain bias or inaccurate representation and the dataset contains more samples of good credit than bad credit which may affect the classifier when we train it. Despite all of these limitations, we believe that our model has achieved the goal of identifying factors to be considered when assessing credit worthiness and predicting credit risk based on these factors.
+
+For future research, it would be interesting to know by how much the factors we identified can increase or decrease credit risk. In other words, while we were able to identify factors that impact credit risk, there is still the question of which factors have the most significant influence on increasing or decreasing the credit risk in individuals. Furthermore, since the data is from the 1970s (Grömping, 2019), for future research, a possibility is to do the same analysis but with more recent data. There may be several new variables that need to be included. It may also be required to remove some of the variables that are used in this data such as the variable "telephone" since whether someone has a landline registered under their name may not be as helpful today as it was in the 1970s to predict credit risk.
+
+\newpage
+
+# References
+
+Grömping, U. (2019). *South German Credit Data: Correcting a Widely Used Data Set* (Report No. 04/2019). Beuth University of Applied Sciences Berlin. Retrieved from http://www1.beuth-hochschule.de/FB_II/reports/Report-2019-004.pdf
